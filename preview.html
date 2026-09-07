@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Automatiserad visionkontroll</title>
+<style>
+body{font-family:Arial;margin:0;background:#eef1f4;color:#17202a}
+header{background:#202a33;color:#fff;padding:18px 28px;display:flex;justify-content:space-between}
+main{max-width:1100px;margin:22px auto;padding:0 18px}
+.grid{display:grid;grid-template-columns:1.2fr .9fr;gap:18px}
+.card{background:#fff;padding:18px;border-radius:12px;box-shadow:0 2px 10px #0001}
+.station{height:350px;background:#dfe4e8;border-radius:10px;position:relative;overflow:hidden}
+.camera{position:absolute;top:45px;left:47%;background:#222;color:#fff;padding:12px 15px;border-radius:8px;font-size:12px}
+.lens{width:18px;height:18px;background:#4aa3d8;border:3px solid #111;border-radius:50%;margin:8px auto -25px}
+.conveyor{position:absolute;left:0;right:0;bottom:35px;height:70px;background:#555}
+.belt{height:100%;background:repeating-linear-gradient(90deg,#666 0 35px,#777 35px 70px)}
+.motor{position:absolute;top:230px;left:15%;width:170px;height:60px;background:#adb6bc;border:5px solid #68747c;border-radius:35px;display:flex;align-items:center;justify-content:center;font-weight:bold;z-index:2}
+.motor.green{background:#59bd72;border-color:#247a39}
+.motor.red{background:#e96565;border-color:#a51f1f}
+.scan{position:absolute;top:105px;left:50%;height:150px;width:3px;background:#2496e8;display:none;z-index:3}
+.points{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.point{padding:10px;border-left:7px solid #aaa;background:#f3f4f5;border-radius:6px}
+.ok{border-color:#28a745;background:#edf8ef}
+.bad{border-color:#dc3545;background:#fff0f0}
+.result{text-align:center;padding:14px;border-radius:9px;font-size:24px;font-weight:bold;background:#eef2f5}
+.good{background:#e8f7ec;color:#176b2c}
+.fault{background:#fff0f0;color:#a21d2a}
+.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee}
+button{margin-top:12px;padding:11px 16px;border:0;border-radius:8px;background:#1769aa;color:#fff;font-size:16px;cursor:pointer}
+button:disabled{opacity:.5}
+.note{font-size:13px;color:#59636b}
+.log{max-height:150px;overflow:auto}
+.log div{padding:6px;border-bottom:1px solid #eee}
+.stop{margin-top:12px;padding:12px;border-radius:8px;background:#fff3cd;color:#725b00;font-weight:bold;display:none}
+@media(max-width:750px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+
+<body>
+<header>
+<b>Automatiserad visionkontroll</b>
+<b>● SYSTEM: REDO</b>
+</header>
+
+<main>
+<div class="grid">
+
+<section class="card">
+<h2>Produktionsstation</h2>
+
+<div class="station">
+  <div class="camera">
+    VISIONKAMERA
+    <div class="lens"></div>
+  </div>
+
+  <div class="scan" id="scan"></div>
+
+  <div class="motor" id="motor">
+    MOTOR <span id="mid"></span>
+  </div>
+
+  <div class="conveyor">
+    <div class="belt"></div>
+  </div>
+</div>
+
+<p class="note">
+Montören skickar fram motorn. När motorn passerar visionkameran genomförs kontrollen automatiskt.
+Motorn stannar efter kontrollen och montören avgör nästa steg.
+</p>
+
+<button id="start" onclick="start()">▶ Skicka fram motor</button>
+
+<div id="stopBox" class="stop">
+⚠ Motorn har stannat – montören behöver hantera resultatet.
+</div>
+</section>
+
+
+<section class="card">
+<h2>Kontrollresultat</h2>
+
+<div id="res" class="result">
+Väntar på motor...
+</div>
+
+<div class="row">
+<b>Motor-ID</b><span id="id">–</span>
+</div>
+
+<div class="row">
+<b>Status</b><span id="status">–</span>
+</div>
+
+<div class="row">
+<b>Avvikelse</b><span id="side">–</span>
+</div>
+
+<h3>Fem kvalitetspunkter</h3>
+<div class="points" id="points"></div>
+</section>
+
+</div>
+
+
+<div class="grid" style="margin-top:18px">
+
+<section class="card">
+<h2>Automatisk kontroll – montören styr flödet</h2>
+
+<div class="row">
+<b>Alla punkter gröna</b>
+<span>→ Motorn blir grön och stannar</span>
+</div>
+
+<div class="row">
+<b>Minst en punkt röd</b>
+<span>→ Motorn blir röd och stannar</span>
+</div>
+
+<div class="row">
+<b>Efter kontroll</b>
+<span>→ Montören skickar vidare eller till underhåll</span>
+</div>
+
+<p class="note">
+Systemet tar alltså inte själv beslut om att skicka iväg motorn.
+Montören skickar fram motorn och ansvarar för nästa steg efter kontrollen.
+</p>
+</section>
+
+
+<section class="card">
+<h2>Kontrollhistorik</h2>
+<div class="log" id="log">Ingen kontroll genomförd ännu.</div>
+</section>
+
+</div>
+</main>
+
+
+<script>
+let n=0,busy=false;
+
+const names=[
+"Kvalitetspunkt 1",
+"Kvalitetspunkt 2",
+"Kvalitetspunkt 3",
+"Kvalitetspunkt 4",
+"Kvalitetspunkt 5"
+];
+
+function points(a){
+ document.getElementById("points").innerHTML=a.map((x,i)=>{
+   let cls=x===true?"ok":x===false?"bad":"";
+   let symbol=x===true?"✓":x===false?"✕":"…";
+   let text=x===true?"Godkänd":x===false?"AVVIKELSE":"Kontrolleras";
+   return '<div class="point '+cls+'">'+symbol+" "+names[i]+'<br><small>'+text+'</small></div>';
+ }).join("");
+}
+
+points([null,null,null,null,null]);
+
+
+function start(){
+
+ if(busy)return;
+
+ busy=true;
+
+ const b=document.getElementById("start");
+ const m=document.getElementById("motor");
+ const s=document.getElementById("scan");
+ const r=document.getElementById("res");
+ const stop=document.getElementById("stopBox");
+
+ b.disabled=true;
+ stop.style.display="none";
+
+ n++;
+
+ let id="M-"+(1000+n);
+
+ document.getElementById("mid").textContent=id;
+ document.getElementById("id").textContent=id;
+ document.getElementById("status").textContent="Skickas fram...";
+ document.getElementById("side").textContent="–";
+
+ r.className="result";
+ r.textContent="Motor skickas fram...";
+
+ m.className="motor";
+ m.style.left="15%";
+
+ points([null,null,null,null,null]);
+
+
+ setTimeout(()=>{
+
+   m.style.transition="left 1.8s linear";
+   m.style.left="calc(50% - 85px)";
+
+ },100);
+
+
+ setTimeout(()=>{
+
+   s.style.display="block";
+
+   r.textContent="Visionkameran kontrollerar...";
+   document.getElementById("status").textContent="Kontrollerar...";
+
+ },900);
+
+
+ setTimeout(()=>{
+
+   s.style.display="none";
+
+   /*
+   Här simuleras resultatet.
+   82 % chans att varje punkt är godkänd.
+   */
+
+   let a=Array.from({length:5},()=>Math.random()>.18);
+
+   let ok=a.every(Boolean);
+
+   points(a);
+
+   if(ok){
+
+     m.className="motor green";
+
+     document.getElementById("status").textContent="GODKÄND";
+     document.getElementById("side").textContent="–";
+
+     r.className="result good";
+     r.textContent="✓ MOTOR GODKÄND";
+
+   }else{
+
+     m.className="motor red";
+
+     document.getElementById("status").textContent="AVVIKELSE";
+     document.getElementById("side").textContent=
+       Math.random()>.5?"Vänster sida":"Höger sida";
+
+     r.className="result fault";
+     r.textContent="⚠ AVVIKELSE UPPTÄCKT";
+
+   }
+
+   stop.style.display="block";
+
+   let log=document.getElementById("log");
+
+   if(log.textContent.includes("Ingen kontroll"))
+      log.innerHTML="";
+
+   log.innerHTML=
+     "<div><b>"+id+"</b> – "+
+     (ok?"Godkänd":"Avvikelse → Underhåll")+
+     "</div>"+log.innerHTML;
+
+   /*
+   Viktigt:
+   Motorn stannar här oavsett om den är grön eller röd.
+   Det är montören som skickar fram nästa motor.
+   */
+
+   busy=false;
+   b.disabled=false;
+
+ },3000);
+}
+</script>
+
+</body>
+</html>
